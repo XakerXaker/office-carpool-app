@@ -85,7 +85,6 @@ class Trip(Base):
     est_distance_km:  Mapped[float | None] = mapped_column(nullable=True)
     est_distance_min: Mapped[int | None]   = mapped_column(nullable=True)
 
-    # без скобок — функция передаётся как callable, не вызывается сразу
     created_at: Mapped[datetime.datetime] = mapped_column(default=datetime.datetime.now)
 
     driver       = relationship("User",            back_populates="trips_as_driver")
