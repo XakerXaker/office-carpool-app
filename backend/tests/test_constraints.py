@@ -1,9 +1,18 @@
+"""
+Модульные тесты движка ограничений (geo.evaluate_join_constraints).
+
+Это самый ответственный модуль приложения: он решает, может ли пассажир
+присоединиться к поездке. Тесты написаны на pytest.
+
+Запуск из папки backend:
+    python -m pytest tests/test_constraints.py -v
+"""
 import datetime as dt
-import sys
-import types
+
+import pytest
 
 from app.geo import haversine_km, evaluate_join_constraints
-from app.models import TripStatus, ParticipantStatus
+from app.models import TripStatus
 
 
 class FakeOffice:
@@ -34,91 +43,110 @@ class FakeTrip:
         return self.total_seats - self._taken
 
 
-def approx(a, b, eps=1.0):
-    return abs(a - b) <= eps
+MOSCOW_ORIGIN = (55.751244, 37.618423)
+
+def future_time(hours=2):
+    """Время отправления в будущем (timezone-aware UTC)."""
+    return dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=hours)
 
 
-def run():
-    passed = 0
-    failed = 0
-
-    def check(name, cond):
-        nonlocal passed, failed
-        if cond:
-            passed += 1
-            print(f"  [OK]  {name}")
-        else:
-            failed += 1
-            print(f"  [FAIL] {name}")
-
-    print("haversine_km")
-    # Москва (Красная площадь) -> Санкт-Петербург (центр) ~ 633 км
+def test_haversine_moscow_spb():
+    """Расстояние Москва — Санкт-Петербург ≈ 633 км."""
     d = haversine_km(55.7539, 37.6208, 59.9311, 30.3609)
-    check("Москва–СПБ ~633 км", approx(d, 633, 15))
-    # Та же точка -> 0 км
-    check("одна точка = 0", approx(haversine_km(55.75, 37.62, 55.75, 37.62), 0, 0.01))
+    assert abs(d - 633) <= 15
 
-    future = dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=2)
-    moscow_origin = (55.751244, 37.618423)
 
-    print("Допуск: близкая точка, та же компания, тот же город")
+def test_haversine_same_point_zero():
+    """Расстояние между одной и той же точкой равно нулю."""
+    assert haversine_km(55.75, 37.62, 55.75, 37.62) == pytest.approx(0, abs=0.01)
+
+def test_deny_other_city_far_away():
+    """Главный кейс: пассажир из другого города за сотни км — отказ по R7 и R8."""
     user = FakeUser(2, company_id=1)
-    trip = FakeTrip(driver_id=1, office_company_id=1, origin=moscow_origin, departure=future)
-    res = evaluate_join_constraints(
-        user=user, trip=trip,
-        pickup_lat=55.76, pickup_lng=37.60, pickup_city="Москва",
-    )
-    check("разрешено присоединиться", res.allowed)
-    check("нет нарушений", len(res.violations) == 0)
-
-    print("Отказ: пассажир в другом городе за сотни км")
+    trip = FakeTrip(driver_id=1, office_company_id=1,
+                    origin=MOSCOW_ORIGIN, departure=future_time())
     res = evaluate_join_constraints(
         user=user, trip=trip,
         pickup_lat=59.9311, pickup_lng=30.3609, pickup_city="Санкт-Петербург",
     )
-    check("не разрешено", not res.allowed)
-    check("есть нарушение по расстоянию",
-          any("слишком далеко" in v for v in res.violations))
-    check("есть нарушение по городу",
-          any("не совпадает с городом" in v for v in res.violations))
+    assert res.allowed is False
+    assert any("слишком далеко" in v for v in res.violations)
+    assert any("не совпадает с городом" in v for v in res.violations)
 
-    print("Отказ: чужая компания")
+
+def test_deny_other_company():
+    """Пассажир из другой компании — отказ по R6."""
     other = FakeUser(3, company_id=999)
+    trip = FakeTrip(driver_id=1, office_company_id=1,
+                    origin=MOSCOW_ORIGIN, departure=future_time())
     res = evaluate_join_constraints(
         user=other, trip=trip,
         pickup_lat=55.76, pickup_lng=37.60, pickup_city="Москва",
     )
-    check("отказ по компании", any("компании" in v for v in res.violations))
+    assert res.allowed is False
+    assert any("компании" in v for v in res.violations)
 
-    print("Отказ: нет мест")
-    full = FakeTrip(driver_id=1, office_company_id=1, origin=moscow_origin,
-                    departure=future, total_seats=2, taken=2)
+
+def test_deny_no_seats():
+    """Нет свободных мест — отказ по R3."""
+    user = FakeUser(2, company_id=1)
+    full = FakeTrip(driver_id=1, office_company_id=1, origin=MOSCOW_ORIGIN,
+                    departure=future_time(), total_seats=2, taken=2)
     res = evaluate_join_constraints(
         user=user, trip=full,
         pickup_lat=55.76, pickup_lng=37.60, pickup_city="Москва",
     )
-    check("отказ по местам", any("мест" in v for v in res.violations))
+    assert res.allowed is False
+    assert any("мест" in v for v in res.violations)
 
-    print("Отказ: своя поездка")
+
+def test_deny_own_trip():
+    """Водитель не может присоединиться к своей поездке — отказ по R4."""
+    trip = FakeTrip(driver_id=1, office_company_id=1,
+                    origin=MOSCOW_ORIGIN, departure=future_time())
     res = evaluate_join_constraints(
         user=FakeUser(1, 1), trip=trip,
         pickup_lat=55.76, pickup_lng=37.60, pickup_city="Москва",
     )
-    check("отказ по собственной поездке",
-          any("собственной" in v for v in res.violations))
+    assert res.allowed is False
+    assert any("собственной" in v for v in res.violations)
 
-    print("Отказ: поздно присоединяться")
-    soon = FakeTrip(driver_id=1, office_company_id=1, origin=moscow_origin,
+
+def test_deny_already_joined():
+    """Повторная запись в ту же поездку — отказ по R5."""
+    user = FakeUser(2, company_id=1)
+    trip = FakeTrip(driver_id=1, office_company_id=1,
+                    origin=MOSCOW_ORIGIN, departure=future_time())
+    res = evaluate_join_constraints(
+        user=user, trip=trip,
+        pickup_lat=55.76, pickup_lng=37.60, pickup_city="Москва",
+        already_joined=True,
+    )
+    assert res.allowed is False
+    assert any("уже записаны" in v for v in res.violations)
+
+
+def test_deny_past_cutoff():
+    """До отправления меньше порога — отказ по R2."""
+    user = FakeUser(2, company_id=1)
+    soon = FakeTrip(driver_id=1, office_company_id=1, origin=MOSCOW_ORIGIN,
                     departure=dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=2))
     res = evaluate_join_constraints(
         user=user, trip=soon,
         pickup_lat=55.76, pickup_lng=37.60, pickup_city="Москва",
     )
-    check("отказ по дедлайну", any("отправления" in v for v in res.violations))
-
-    print(f"\nИтого: {passed} пройдено, {failed} провалено")
-    return failed == 0
+    assert res.allowed is False
+    assert any("отправления" in v for v in res.violations)
 
 
-if __name__ == "__main__":
-    ok = run()
+def test_deny_cancelled_trip():
+    """Поездка не в статусе «запланирована» — отказ по R1."""
+    user = FakeUser(2, company_id=1)
+    trip = FakeTrip(driver_id=1, office_company_id=1, origin=MOSCOW_ORIGIN,
+                    departure=future_time(), status=TripStatus.CANCELLED)
+    res = evaluate_join_constraints(
+        user=user, trip=trip,
+        pickup_lat=55.76, pickup_lng=37.60, pickup_city="Москва",
+    )
+    assert res.allowed is False
+    assert any("статус" in v for v in res.violations)

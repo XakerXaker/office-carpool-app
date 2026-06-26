@@ -28,6 +28,7 @@ async function api(path, { method, body, form, auth = true } = {}) {
     payload = JSON.stringify(body);
     headers["Content-Type"] = "application/json";
   }
+
   const httpMethod = method || (payload ? "POST" : "GET");
   const resp = await fetch(API + path, { method: httpMethod, headers, body: payload });
   const data = resp.status === 204 ? null : await resp.json().catch(() => null);
@@ -92,6 +93,21 @@ function setupAuthUI() {
   $("#register-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = e.target;
+    const homeCity = f.home_city.value.trim() || null;
+
+    let homeLat = null, homeLng = null;
+    if (homeCity && window.ymaps) {
+      try {
+        const geoRes = await ymaps.geocode(homeCity, { results: 1 });
+        const geoObj = geoRes.geoObjects.get(0);
+        if (geoObj) {
+          const coords = geoObj.geometry.getCoordinates();
+          homeLat = coords[0];
+          homeLng = coords[1];
+        }
+      } catch (_) {  }
+    }
+
     try {
       const data = await api("/api/auth/register", {
         method: "POST",
@@ -101,7 +117,9 @@ function setupAuthUI() {
           email: f.email.value,
           password: f.password.value,
           company_id: Number(f.company_id.value),
-          home_city: f.home_city.value || null,
+          home_city: homeCity,
+          home_lat: homeLat,
+          home_lng: homeLng,
         },
       });
       onAuthSuccess(data);
@@ -170,7 +188,7 @@ function loadYandexScript(apiKey) {
     if (window.ymaps) return resolve();
     const s = document.createElement("script");
     const keyPart = apiKey ? `apikey=${apiKey}&` : "";
-    s.src = `https://api-maps.yandex.ru/2.1/?${keyPart}lang=ru_RU`;
+    s.src = `https://api-maps.yandex.ru/2.1/?${keyPart}lang=ru_RU&load=package.full`;
     s.onload = resolve;
     s.onerror = () => reject(new Error("script load failed"));
     document.head.appendChild(s);
@@ -181,7 +199,7 @@ async function initMap() {
   if (!state.config.yandex_js_api_key) {
     showMapFallback(
       "Не задан ключ Yandex JS API. Укажите YANDEX_JS_API_KEY в окружении сервера " +
-      "Логика приложения работает и без карты."
+      "(см. README). Логика приложения работает и без карты."
     );
   }
   try {
@@ -192,11 +210,28 @@ async function initMap() {
     return;
   }
 
-  const center = state.offices[0]
-    ? [state.offices[0].lat, state.offices[0].lng]
-    : [55.751244, 37.618423];
+  let center = [55.751244, 37.618423];
 
-  state.map = new ymaps.Map("map", { center, zoom: 11, controls: ["zoomControl"] });
+  if (state.user && state.user.home_lat && state.user.home_lng) {
+    center = [state.user.home_lat, state.user.home_lng];
+  } else if (state.user && state.user.home_city) {
+    try {
+      const geoRes = await ymaps.geocode(state.user.home_city, { results: 1 });
+      const geoObj = geoRes.geoObjects.get(0);
+      if (geoObj) {
+        center = geoObj.geometry.getCoordinates();
+      }
+    } catch (_) {
+      const cityOffice = state.offices.find(
+        (o) => o.city.toLowerCase() === state.user.home_city.toLowerCase()
+      );
+      if (cityOffice) center = [cityOffice.lat, cityOffice.lng];
+    }
+  } else if (state.offices.length > 0) {
+    center = [state.offices[0].lat, state.offices[0].lng];
+  }
+
+  state.map = new ymaps.Map("map", { center, zoom: 12, controls: ["zoomControl"] });
 
   state.map.events.add("click", (e) => {
     const coords = e.get("coords");
@@ -274,10 +309,12 @@ function setPickupPoint(coords) {
 async function reverseGeocode(coords) {
   if (!window.ymaps) return null;
   try {
-    const res = await ymaps.geocode(coords);
+    const res = await ymaps.geocode(coords, { results: 1 });
     const first = res.geoObjects.get(0);
     if (!first) return null;
-    const address = first.getAddressLine();
+
+    let address = first.getAddressLine() || "";
+    if (address.startsWith("Россия, ")) address = address.slice("Россия, ".length);
 
     let city = "";
 
@@ -285,6 +322,7 @@ async function reverseGeocode(coords) {
       const loc = first.getLocalities();
       if (loc && loc.length) city = loc[0];
     }
+
     if (!city) {
       const comps =
         first.properties.get("metaDataProperty.GeocoderMetaData.Address.Components") || [];
@@ -292,11 +330,17 @@ async function reverseGeocode(coords) {
         const c = comps.find((x) => x.kind === k);
         return c ? c.name : "";
       };
-      city = byKind("locality") || byKind("area") || byKind("province");
+      city = byKind("locality") || byKind("area");
     }
+
     if (!city && typeof first.getAdministrativeAreas === "function") {
       const areas = first.getAdministrativeAreas();
       if (areas && areas.length) city = areas[0];
+    }
+
+    if (!city && address) {
+      const parts = address.split(",").map((s) => s.trim());
+      if (parts[0] && !/\d/.test(parts[0])) city = parts[0];
     }
 
     return { address, city };
@@ -307,17 +351,50 @@ async function reverseGeocode(coords) {
 
 function drawRoute(trip) {
   if (!state.map || !window.ymaps) return;
-  if (state.routeObject) state.map.geoObjects.remove(state.routeObject);
+
+  if (state.routeObject) {
+    try { state.map.geoObjects.remove(state.routeObject); } catch(_) {}
+    state.routeObject = null;
+  }
+
   const office = state.offices.find((o) => o.id === trip.office_id);
   if (!office) return;
-  state.routeObject = new ymaps.multiRouter.MultiRoute(
-    {
-      referencePoints: [[trip.origin_lat, trip.origin_lng], [office.lat, office.lng]],
-      params: { routingMode: "auto" },
-    },
-    { boundsAutoApply: true, routeActiveStrokeColor: "F2A900", routeActiveStrokeWidth: 5 }
+
+  const from = [trip.origin_lat, trip.origin_lng];
+  const to   = [office.lat, office.lng];
+
+  const pad = 0.015;
+  state.map.setBounds(
+    [[Math.min(from[0],to[0])-pad, Math.min(from[1],to[1])-pad],
+     [Math.max(from[0],to[0])+pad, Math.max(from[1],to[1])+pad]],
+    { checkZoomRange: true, duration: 400 }
   );
-  state.map.geoObjects.add(state.routeObject);
+
+  const polyline = new ymaps.Polyline(
+    [from, to],
+    { hintContent: "Маршрут поездки" },
+    { strokeColor: "F2A900", strokeWidth: 5, strokeOpacity: 0.75, strokeStyle: "solid" }
+  );
+  state.map.geoObjects.add(polyline);
+  state.routeObject = polyline;
+
+  const originMark = new ymaps.Placemark(from,
+    { iconContent: "А", balloonContent: "Точка старта" },
+    { preset: "islands#yellowStretchyIcon" }
+  );
+  state.map.geoObjects.add(originMark);
+
+  if (typeof ymaps.route === "function") {
+    ymaps.route([from, to], { routingMode: "auto" })
+      .then(function(route) {
+        try { state.map.geoObjects.remove(polyline); } catch(_) {}
+        const paths = route.getPaths();
+        paths.options.set({ strokeColor: "F2A900", strokeWidth: 6, opacity: 0.9 });
+        state.map.geoObjects.add(paths);
+        state.routeObject = paths;
+      })
+      .catch(function() {  });
+  }
 }
 
 async function loadOffices() {

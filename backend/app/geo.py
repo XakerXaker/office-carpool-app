@@ -22,9 +22,10 @@ def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
 
 @dataclass
 class ConstraintResult:
+    """Результат проверки ограничений."""
     allowed: bool
-    violations: List[str] = field(default_factory=list)   # причины отказа (человекочитаемые)
-    distance_to_origin_km: float | None = None             # для информирования UI
+    violations: List[str] = field(default_factory=list)
+    distance_to_origin_km: float | None = None
 
 
 def evaluate_join_constraints(
@@ -40,44 +41,54 @@ def evaluate_join_constraints(
     """
     Проверить, может ли пользователь присоединиться к поездке.
 
-    Набор правил (каждое можно включать/настраивать в config.py):
-
+    Набор правил:
       R1. Поездка должна быть в статусе PLANNED.
-      R2. До отправления должно оставаться не меньше JOIN_CUTOFF_MINUTES.
+      R2. До отправления должно оставаться не меньше 10.
       R3. В машине должны быть свободные места.
       R4. Пользователь не может присоединиться к собственной поездке.
       R5. Пользователь не должен быть уже записан в эту поездку.
       R6. (опц.) Пассажир и водитель — из одной компании.
       R7. (опц.) Город посадки совпадает с городом старта поездки.
-      R8. Точка посадки в пределах MAX_PICKUP_RADIUS_KM от точки старта.
-          Именно это правило отсекает сценарий из условия: сотрудник из
-          другого города (за сотню километров) не сможет попасть в поездку.
+      R8. Точка посадки в пределах 1 км от точки старта.
     """
-    now = now or dt.datetime.utcnow()
+    now = now or dt.datetime.now(dt.timezone.utc)
     violations: List[str] = []
 
+    # R1
     if trip.status != TripStatus.PLANNED:
         violations.append("Поездка недоступна для присоединения (статус не «запланирована»).")
 
-    cutoff = trip.departure_time - dt.timedelta(minutes=10)
+    # R2
+    departure = trip.departure_time
+    if departure.tzinfo is None:
+        departure = departure.replace(tzinfo=dt.timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=dt.timezone.utc)
+
+    cutoff = departure - dt.timedelta(minutes=10)
     if now >= cutoff:
         violations.append(
             f"Присоединение закрыто: до отправления менее "
             f"10 минут."
         )
 
+    # R3
     if trip.seats_left <= 0:
         violations.append("Нет свободных мест в машине.")
 
+    # R4
     if trip.driver_id == user.id:
         violations.append("Нельзя присоединиться к собственной поездке.")
 
+    # R5
     if already_joined:
         violations.append("Вы уже записаны в эту поездку.")
 
-    if user.company_id != trip.office.company_id:
-        violations.append("Поездка доступна только сотрудникам той же компании.")
 
+    if user.company_id != trip.office.company_id:
+            violations.append("Поездка доступна только сотрудникам той же компании.")
+
+    # R7 — один город
     if pickup_city:
         a = pickup_city.strip().lower()
         b = trip.origin_city.strip().lower()
@@ -88,6 +99,7 @@ def evaluate_join_constraints(
                 f"«{trip.origin_city}»."
             )
 
+    # R8 — радиус посадки
     distance = haversine_km(pickup_lat, pickup_lng, trip.origin_lat, trip.origin_lng)
     if distance > 1:
         violations.append(
