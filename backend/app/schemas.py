@@ -49,7 +49,7 @@ class TripCreate(BaseModel):
     origin_address: str = Field(min_length=2, max_length=255)
     origin_city: str = Field(min_length=2, max_length=80)
     origin_lat: float = Field(ge=-90, le=90)
-    origin_lnt: float = Field(ge=-180, le=180)
+    origin_lng: float = Field(ge=-180, le=180)
     departure_time: datetime.datetime
     total_seats: int = Field(ge=1, le=7, default=3)
 
@@ -76,7 +76,6 @@ class TripOut(BaseModel):
     departure_time: datetime.datetime
     total_seats: int
     seats_left: int
-    driver_status: str
     status: str
     est_distance_km: Optional[float] = None
     est_duration_min: Optional[int] = None

@@ -3,11 +3,10 @@ import enum
 from typing import List
 
 from sqlalchemy import ForeignKey, UniqueConstraint
-from sqlalchemy.orm import relationship, DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import relationship, Mapped, mapped_column
 
+from .database import Base
 
-class Base(DeclarativeBase):
-    pass
 
 class TripStatus(str, enum.Enum):
     PLANNED   = "planned"
@@ -36,7 +35,7 @@ class User(Base):
     __tablename__ = "users"
 
     id:            Mapped[int]   = mapped_column(primary_key=True)
-    fullname:      Mapped[str]   = mapped_column(nullable=False)
+    full_name:     Mapped[str]   = mapped_column(nullable=False)
     email:         Mapped[str]   = mapped_column(unique=True, nullable=False, index=True)
     password_hash: Mapped[str]   = mapped_column(nullable=False)
 
@@ -44,7 +43,7 @@ class User(Base):
 
     home_city: Mapped[str | None]   = mapped_column(nullable=True)
     home_lat:  Mapped[float | None] = mapped_column(nullable=True)
-    home_lon:  Mapped[float | None] = mapped_column(nullable=True)
+    home_lng:  Mapped[float | None] = mapped_column(nullable=True)
 
     company          = relationship("Company", back_populates="users")
     trips_as_driver  = relationship("Trip",    back_populates="driver")
@@ -83,7 +82,7 @@ class Trip(Base):
     status:         Mapped[TripStatus]        = mapped_column(nullable=False, default=TripStatus.PLANNED)
 
     est_distance_km:  Mapped[float | None] = mapped_column(nullable=True)
-    est_distance_min: Mapped[int | None]   = mapped_column(nullable=True)
+    est_duration_min: Mapped[int | None]   = mapped_column(nullable=True)
 
     created_at: Mapped[datetime.datetime] = mapped_column(default=datetime.datetime.now)
 

@@ -3,10 +3,11 @@ import math
 from dataclasses import dataclass, field
 from typing import List
 
-from .models import Trip, TripStatus, User
+from .models import Trip, TripStatus, User, ParticipantStatus
 
 
 EARTH_RADIUS_KM = 6371.0088
+
 
 def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     rlat1, rlat2 = math.radians(lat1), math.radians(lat2)
@@ -22,8 +23,8 @@ def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
 @dataclass
 class ConstraintResult:
     allowed: bool
-    violations: List[str] = field(default_factory=list)
-    distance_to_origin_km: float | None = None
+    violations: List[str] = field(default_factory=list)   # причины отказа (человекочитаемые)
+    distance_to_origin_km: float | None = None             # для информирования UI
 
 
 def evaluate_join_constraints(
@@ -36,7 +37,23 @@ def evaluate_join_constraints(
     now: dt.datetime | None = None,
     already_joined: bool = False,
 ) -> ConstraintResult:
-    now = now or dt.datetime.now
+    """
+    Проверить, может ли пользователь присоединиться к поездке.
+
+    Набор правил (каждое можно включать/настраивать в config.py):
+
+      R1. Поездка должна быть в статусе PLANNED.
+      R2. До отправления должно оставаться не меньше JOIN_CUTOFF_MINUTES.
+      R3. В машине должны быть свободные места.
+      R4. Пользователь не может присоединиться к собственной поездке.
+      R5. Пользователь не должен быть уже записан в эту поездку.
+      R6. (опц.) Пассажир и водитель — из одной компании.
+      R7. (опц.) Город посадки совпадает с городом старта поездки.
+      R8. Точка посадки в пределах MAX_PICKUP_RADIUS_KM от точки старта.
+          Именно это правило отсекает сценарий из условия: сотрудник из
+          другого города (за сотню километров) не сможет попасть в поездку.
+    """
+    now = now or dt.datetime.utcnow()
     violations: List[str] = []
 
     if trip.status != TripStatus.PLANNED:
@@ -45,8 +62,8 @@ def evaluate_join_constraints(
     cutoff = trip.departure_time - dt.timedelta(minutes=10)
     if now >= cutoff:
         violations.append(
-            "Присоединение закрыто: до отправления менее "
-            "10 минут."
+            f"Присоединение закрыто: до отправления менее "
+            f"10 минут."
         )
 
     if trip.seats_left <= 0:
@@ -62,17 +79,20 @@ def evaluate_join_constraints(
         violations.append("Поездка доступна только сотрудникам той же компании.")
 
     if pickup_city:
-        if pickup_city.strip().lower() != trip.origin_city.strip().lower():
+        a = pickup_city.strip().lower()
+        b = trip.origin_city.strip().lower()
+        same_city = a == b or (a and b and (a in b or b in a))
+        if not same_city:
             violations.append(
                 f"Город посадки «{pickup_city}» не совпадает с городом поездки "
                 f"«{trip.origin_city}»."
             )
 
     distance = haversine_km(pickup_lat, pickup_lng, trip.origin_lat, trip.origin_lng)
-    if distance > 15:
+    if distance > 1:
         violations.append(
             f"Точка посадки слишком далеко от старта поездки: "
-            f"{distance:.1f} км при допустимых {15:.0f} км."
+            f"{distance:.1f} км при допустимых {1:.0f} км."
         )
 
     return ConstraintResult(

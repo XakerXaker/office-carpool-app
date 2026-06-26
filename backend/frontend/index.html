@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Попутка в офис</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap&subset=cyrillic,cyrillic-ext" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <section id="auth-screen" class="auth-screen">
+    <div class="auth-card">
+      <div class="brand">
+        <span class="brand-mark">⇄</span>
+        <h1 class="brand-name">Попутка<span>в офис</span></h1>
+      </div>
+      <p class="auth-tagline">Сервис совместных поездок сотрудников одной компании.</p>
+
+      <div class="tabs">
+        <button class="tab is-active" data-tab="login">Вход</button>
+        <button class="tab" data-tab="register">Регистрация</button>
+      </div>
+
+      <form id="login-form" class="form">
+        <label class="field">
+          <span>Email</span>
+          <input type="email" name="email" required placeholder="driver.msk@example.com" />
+        </label>
+        <label class="field">
+          <span>Пароль</span>
+          <input type="password" name="password" required placeholder="password123" />
+        </label>
+        <button type="submit" class="btn btn-primary">Войти</button>
+        <div class="hint">
+          Демо-аккаунты (пароль <code>password123</code>):
+          <div class="demo-row">
+            <button type="button" class="chip" data-demo="driver.msk@example.com">Водитель · Москва</button>
+            <button type="button" class="chip" data-demo="passenger.msk@example.com">Пассажир · Москва</button>
+            <button type="button" class="chip" data-demo="passenger.spb@example.com">Пассажир · СПб</button>
+          </div>
+        </div>
+      </form>
+
+      <form id="register-form" class="form hidden">
+        <label class="field"><span>Имя и фамилия</span><input name="full_name" required /></label>
+        <label class="field"><span>Email</span><input type="email" name="email" required /></label>
+        <label class="field"><span>Пароль</span><input type="password" name="password" minlength="6" required /></label>
+        <label class="field"><span>Компания</span><select name="company_id" id="company-select" required></select></label>
+        <label class="field"><span>Домашний город</span><input name="home_city" placeholder="Москва" /></label>
+        <button type="submit" class="btn btn-primary">Создать аккаунт</button>
+      </form>
+
+      <p id="auth-error" class="error-text"></p>
+    </div>
+  </section>
+
+  <main id="app-screen" class="app-screen hidden">
+    <aside class="panel">
+      <header class="panel-head">
+        <div class="brand small">
+          <span class="brand-mark">⇄</span>
+          <span class="brand-name">Попутка<span>в офис</span></span>
+        </div>
+        <div class="user-box">
+          <span id="user-name" class="user-name"></span>
+          <button id="logout-btn" class="btn btn-ghost btn-sm">Выйти</button>
+        </div>
+      </header>
+
+      <nav class="seg">
+        <button class="seg-btn is-active" data-view="trips">Поездки</button>
+        <button class="seg-btn" data-view="create">Создать поездку</button>
+      </nav>
+
+      <section id="view-trips" class="view">
+        <div class="filter-row">
+          <select id="filter-office" class="select"><option value="">Все офисы</option></select>
+        </div>
+        <div id="trips-list" class="trips-list"></div>
+      </section>
+
+      <section id="view-create" class="view hidden">
+        <p class="step-hint">Кликните по карте, чтобы задать точку старта, затем заполните детали.</p>
+        <form id="create-form" class="form">
+          <label class="field"><span>Офис назначения</span>
+            <select name="office_id" id="create-office" required></select>
+          </label>
+          <label class="field"><span>Адрес старта</span>
+            <input name="origin_address" id="origin-address" placeholder="Кликните по карте…" readonly />
+          </label>
+          <div class="grid-2">
+            <label class="field"><span>Город старта</span><input name="origin_city" id="origin-city" placeholder="определится по карте" readonly /></label>
+            <label class="field"><span>Мест в авто</span><input type="number" name="total_seats" min="1" max="7" value="3" required /></label>
+          </div>
+          <label class="field"><span>Время отправления</span>
+            <input type="datetime-local" name="departure_time" required />
+          </label>
+          <div class="coord-readout" id="origin-coords">координаты: —</div>
+          <button type="submit" class="btn btn-primary">Опубликовать поездку</button>
+        </form>
+      </section>
+    </aside>
+
+    <div class="map-wrap">
+      <div id="map" class="map"></div>
+      <div id="map-fallback" class="map-fallback hidden">
+        <h3>Карта недоступна</h3>
+        <p id="map-fallback-text"></p>
+      </div>
+      <div id="mode-banner" class="mode-banner hidden"></div>
+    </div>
+  </main>
+
+  <div id="join-modal" class="modal hidden">
+    <div class="modal-card">
+      <button class="modal-close" id="join-close">×</button>
+      <h3 class="modal-title">Присоединиться к поездке</h3>
+      <div id="join-trip-summary" class="trip-summary"></div>
+      <p class="step-hint">Укажите точку посадки: кликните по карте.</p>
+      <label class="field"><span>Адрес посадки</span><input id="pickup-address" placeholder="Кликните по карте…" readonly /></label>
+      <label class="field"><span>Город посадки</span><input id="pickup-city" placeholder="определится по карте" readonly /></label>
+      <div id="check-result" class="check-result hidden"></div>
+      <div class="modal-actions">
+        <button id="join-confirm" class="btn btn-primary" disabled>Присоединиться</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

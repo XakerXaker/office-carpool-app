@@ -1,4 +1,5 @@
 import datetime as dt
+from typing import Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -26,6 +27,7 @@ def create_access_token(user_id: int) -> str:
     payload = {"sub": str(user_id), "exp": expire}
     return jwt.encode(payload, "dev-secret-change-me-in-production", algorithm="HS256")
 
+
 def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
@@ -48,7 +50,7 @@ def get_current_user(
     except (JWTError, ValueError):
         raise credentials_exc
 
-    user = db.get(User, user_id)
+    user: Optional[User] = db.get(User, user_id)
     if user is None:
         raise credentials_exc
     return user
