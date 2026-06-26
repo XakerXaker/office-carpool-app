@@ -1,10 +1,4 @@
-"""
-Модульные тесты движка ограничений (geo.evaluate_join_constraints).
-
-Это самый ответственный модуль приложения: он решает, может ли пассажир
-присоединиться к поездке. Тесты написаны на pytest.
-
-Запуск из папки backend:
+"""Запуск из папки backend:
     python -m pytest tests/test_constraints.py -v
 """
 import datetime as dt
